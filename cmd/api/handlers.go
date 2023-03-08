@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"net/http"
 )
@@ -20,38 +21,6 @@ func (app *application) Home(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) AllMovies(w http.ResponseWriter, r *http.Request) {
-	// var movies []models.Movie
-
-	// rd, _ := time.Parse("2006-01-02", "1986-03-07")
-
-	// highlander := models.Movie{
-	// 	ID:          1,
-	// 	Title:       "Highlander",
-	// 	ReleaseDate: rd,
-	// 	MPAARating:  "R",
-	// 	RunTime:     116,
-	// 	Description: "A very nice movie",
-	// 	CreatedAt:   time.Now(),
-	// 	UpdatedAt:   time.Now(),
-	// }
-
-	// movies = append(movies, highlander)
-
-	// rd, _ = time.Parse("2006-01-02", "1999-07-08")
-
-	// DDLJ := models.Movie{
-	// 	ID:          2,
-	// 	Title:       "Dilwale Dulhaniya le Jaenge",
-	// 	ReleaseDate: rd,
-	// 	MPAARating:  "PG-13",
-	// 	RunTime:     140,
-	// 	Description: "A very romantic movie",
-	// 	CreatedAt:   time.Now(),
-	// 	UpdatedAt:   time.Now(),
-	// }
-
-	// movies = append(movies, DDLJ)
-
 	movies, err := app.DB.AllMovies()
 	if err != nil {
 		app.errorJSON(w, err)
@@ -63,16 +32,35 @@ func (app *application) AllMovies(w http.ResponseWriter, r *http.Request) {
 
 func (app *application) authenticate(w http.ResponseWriter, r *http.Request) {
 	//Read json payload
+	var requestPayload struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	err := app.readJSON(w, r, &requestPayload)
+	if err != nil {
+		app.errorJSON(w, err, http.StatusBadRequest)
+		return
+	}
 
 	//validate user against database
+	user, err := app.DB.GetUserByEmail(requestPayload.Email)
+	if err != nil {
+		app.errorJSON(w, errors.New("invalid Credentials"), http.StatusBadRequest)
+		return
+	}
 
 	//check password
+	valid, err := user.PasswordMatches(requestPayload.Password)
+	if err != nil || !valid {
+		app.errorJSON(w, errors.New("invalid credentials"), http.StatusBadRequest)
+	}
 
 	//create a jwt user
 	u := jwtUser{
-		ID:        1,
-		FirstName: "Admin",
-		LastName:  "User",
+		ID:        user.ID,
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
 	}
 
 	//generate tokens
@@ -82,7 +70,11 @@ func (app *application) authenticate(w http.ResponseWriter, r *http.Request) {
 		app.errorJSON(w, err)
 		return
 	}
-	log.Println(tokens.Token)
 
-	w.Write([]byte(tokens.Token))
+	//Create a refresh token
+	refreshCookie := app.auth.GetRefreshCookie(tokens.RefreshToken)
+	http.SetCookie(w, refreshCookie)
+
+	// w.Write([]byte(tokens.Token))
+	app.writeJSON(w, http.StatusAccepted, tokens)
 }
